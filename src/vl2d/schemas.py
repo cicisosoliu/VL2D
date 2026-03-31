@@ -14,6 +14,11 @@ class VideoRead(BaseModel):
     created_at: datetime
 
 
+class RejectedFileRead(BaseModel):
+    filename: str
+    reason: str
+
+
 class JobCreateRequest(BaseModel):
     video_id: str
     vad_provider: str | None = None
@@ -109,3 +114,8 @@ class ProvidersRead(BaseModel):
     vad: list[str]
     enhancer: list[str]
     ocr: list[str]
+
+
+class JobBatchRead(BaseModel):
+    jobs: list[JobRead]
+    rejected_files: list[RejectedFileRead] = Field(default_factory=list)

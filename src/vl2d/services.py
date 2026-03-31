@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from vl2d.config import Settings
 from vl2d.models import ExportRecord, FrameObservation, Job, Sample, Video
-from vl2d.schemas import JobCreateRequest, SamplePatchRequest
+from vl2d.schemas import JobCreateRequest, RejectedFileRead, SamplePatchRequest
 from vl2d.storage import copy_input_video, save_uploaded_video
 from vl2d.video_formats import VideoFormatError, validate_video_filename
 
@@ -37,6 +37,28 @@ async def create_video_from_upload(session: Session, settings: Settings, upload:
     session.commit()
     session.refresh(video)
     return video
+
+
+async def create_jobs_from_uploads(
+    session: Session,
+    settings: Settings,
+    uploads: list[UploadFile],
+) -> tuple[list[Job], list[RejectedFileRead]]:
+    jobs: list[Job] = []
+    rejected: list[RejectedFileRead] = []
+    for upload in uploads:
+        try:
+            video = await create_video_from_upload(session, settings, upload)
+            jobs.append(create_job(session, settings, JobCreateRequest(video_id=video.id)))
+        except HTTPException as exc:
+            rejected.append(
+                RejectedFileRead(
+                    filename=upload.filename or "upload.bin",
+                    reason=str(exc.detail),
+                )
+            )
+            await upload.close()
+    return jobs, rejected
 
 
 def create_job(session: Session, settings: Settings, payload: JobCreateRequest) -> Job:

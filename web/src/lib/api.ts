@@ -60,6 +60,16 @@ export type ExportRecord = {
   error_message: string | null;
 };
 
+export type RejectedFile = {
+  filename: string;
+  reason: string;
+};
+
+export type JobBatchResult = {
+  jobs: Job[];
+  rejected_files: RejectedFile[];
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
@@ -96,6 +106,17 @@ export async function uploadAndQueue(file: File): Promise<Job> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_id: video.id }),
+  });
+}
+
+export async function uploadAndQueueBatch(files: File[]): Promise<JobBatchResult> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+  return request<JobBatchResult>("/api/jobs/upload-batch", {
+    method: "POST",
+    body: formData,
   });
 }
 

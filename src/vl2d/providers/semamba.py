@@ -13,6 +13,7 @@ class SEMambaEnhancerProvider(EnhancerProvider):
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.checkpoint_path = settings.semamba_checkpoint_path
 
     def enhance(self, segment_path: Path, output_path: Path) -> AudioArtifact:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -23,7 +24,8 @@ class SEMambaEnhancerProvider(EnhancerProvider):
             metadata={
                 "provider": self.name,
                 "degraded": True,
+                "checkpoint_path": str(self.checkpoint_path),
+                "checkpoint_exists": self.checkpoint_path.exists(),
                 "message": "SEMamba integration shell is in place; install the real model runtime to replace passthrough behavior.",
             },
         )
-

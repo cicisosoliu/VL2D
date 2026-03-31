@@ -19,8 +19,8 @@ from vl2d.providers import get_provider_registry
 from vl2d.schemas import JobCreateRequest
 from vl2d.services import create_job, create_video_from_path, get_job_or_404
 from vl2d.storage import resolve_artifact
-from vl2d.video_formats import VideoFormatError
-from vl2d.worker.runner import run_worker_loop, run_worker_once
+from vl2d.video_formats import VideoFormatError, list_supported_videos
+from vl2d.worker.runner import run_job_by_id, run_worker_loop, run_worker_once
 
 app = typer.Typer(help="VL2D command line interface")
 providers_app = typer.Typer(help="Inspect available providers")
@@ -42,6 +42,93 @@ def list_registered_providers() -> None:
     console.print({"vad": providers.vad, "enhancer": providers.enhancer, "ocr": providers.ocr})
 
 
+def _create_job_for_path(settings, session_factory, input_path: Path):
+    with session_factory() as session:
+        video = create_video_from_path(session, settings, input_path)
+        return create_job(session, settings, JobCreateRequest(video_id=video.id))
+
+
+def _run_cli_job(
+    *,
+    settings,
+    session_factory,
+    job_id: str,
+    label: str,
+    export: bool,
+    include_all_statuses: bool,
+) -> tuple[str, str | None]:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        process_task = progress.add_task(f"[cyan]{label}: queued", total=100)
+
+        def on_process(update: ProgressUpdate) -> None:
+            completed = 0.0 if update.progress is None else max(0.0, min(update.progress * 100, 100.0))
+            progress.update(process_task, description=f"[cyan]{label}: {update.message}", completed=completed)
+
+        ran = run_job_by_id(job_id, settings=settings, worker_id="cli-runner", progress_callback=on_process)
+        if not ran:
+            progress.update(process_task, description=f"[red]{label}: job not found", completed=100)
+            raise typer.Exit(code=1)
+
+        with session_factory() as session:
+            job = get_job_or_404(session, job_id)
+            summary_path = resolve_artifact(settings, job.stats.get("artifact_summary_path"))
+            console.print(
+                {
+                    "input": label,
+                    "job_id": job.id,
+                    "status": job.status,
+                    "sample_count": job.stats.get("sample_count", 0),
+                    "summary_path": str(summary_path) if summary_path else None,
+                }
+            )
+            if job.status != "succeeded":
+                return job.status, None
+
+            if not export:
+                return job.status, None
+
+            export_task = progress.add_task(f"[magenta]{label}: preparing export", total=100)
+
+            def on_export(update: ProgressUpdate) -> None:
+                completed = 0.0 if update.progress is None else max(0.0, min(update.progress * 100, 100.0))
+                progress.update(export_task, description=f"[magenta]{label}: {update.message}", completed=completed)
+
+            export_record = export_job_dataset(
+                session,
+                settings,
+                job,
+                include_all_statuses=include_all_statuses,
+                progress_callback=on_export,
+            )
+            archive_path = resolve_artifact(settings, export_record.artifact_path)
+            dataset_dir = archive_path.parent / "dataset" if archive_path is not None else None
+            console.print(
+                {
+                    "input": label,
+                    "export_id": export_record.id,
+                    "exported_sample_count": export_record.item_count,
+                    "artifact_path": str(archive_path) if archive_path else export_record.artifact_path,
+                    "dataset_dir": str(dataset_dir) if dataset_dir else None,
+                    "include_all_statuses": include_all_statuses,
+                }
+            )
+            if export_record.item_count == 0:
+                console.print(
+                    "[yellow]Export completed with 0 samples. "
+                    "This usually means no samples matched the export filter. "
+                    "Use `--include-all-statuses` or approve samples in the Web UI first.[/yellow]"
+                )
+            return job.status, str(archive_path) if archive_path else export_record.artifact_path
+
+
 @app.command()
 def run(
     input_path: Path = typer.Argument(..., exists=True, resolve_path=True),
@@ -55,78 +142,41 @@ def run(
     settings = get_settings()
     init_db(settings)
     session_factory = get_session_factory(settings)
-    with session_factory() as session:
-        try:
-            video = create_video_from_path(session, settings, input_path)
-        except VideoFormatError as exc:
-            raise typer.BadParameter(str(exc), param_hint="input_path") from exc
-        job = create_job(session, settings, JobCreateRequest(video_id=video.id))
+    try:
+        input_videos = list_supported_videos(input_path)
+    except VideoFormatError as exc:
+        raise typer.BadParameter(str(exc), param_hint="input_path") from exc
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-        process_task = progress.add_task("[cyan]Queued job", total=100)
+    if not input_videos:
+        raise typer.BadParameter("no supported videos found in directory. VL2D accepts `.mp4` and `.mov`.", param_hint="input_path")
 
-        def on_process(update: ProgressUpdate) -> None:
-            completed = 0.0 if update.progress is None else max(0.0, min(update.progress * 100, 100.0))
-            progress.update(process_task, description=f"[cyan]{update.message}", completed=completed)
+    statuses: list[str] = []
+    export_paths: list[str] = []
+    for index, video_path in enumerate(input_videos, start=1):
+        label = f"[{index}/{len(input_videos)}] {video_path.name}"
+        job = _create_job_for_path(settings, session_factory, video_path)
+        status, export_path = _run_cli_job(
+            settings=settings,
+            session_factory=session_factory,
+            job_id=job.id,
+            label=label,
+            export=export,
+            include_all_statuses=include_all_statuses,
+        )
+        statuses.append(status)
+        if export_path:
+            export_paths.append(export_path)
 
-        ran = run_worker_once(settings=settings, worker_id="cli-runner", progress_callback=on_process)
-        if not ran:
-            progress.update(process_task, description="[red]No queued job was found", completed=100)
-            raise typer.Exit(code=1)
-
-        with session_factory() as session:
-            job = get_job_or_404(session, job.id)
-            summary_path = resolve_artifact(settings, job.stats.get("artifact_summary_path"))
-            console.print(
-                {
-                    "job_id": job.id,
-                    "status": job.status,
-                    "sample_count": job.stats.get("sample_count", 0),
-                    "summary_path": str(summary_path) if summary_path else None,
-                }
-            )
-            if job.status != "succeeded":
-                raise typer.Exit(code=1)
-
-            if export:
-                export_task = progress.add_task("[magenta]Preparing export", total=100)
-
-                def on_export(update: ProgressUpdate) -> None:
-                    completed = 0.0 if update.progress is None else max(0.0, min(update.progress * 100, 100.0))
-                    progress.update(export_task, description=f"[magenta]{update.message}", completed=completed)
-
-                export_record = export_job_dataset(
-                    session,
-                    settings,
-                    job,
-                    include_all_statuses=include_all_statuses,
-                    progress_callback=on_export,
-                )
-                archive_path = resolve_artifact(settings, export_record.artifact_path)
-                dataset_dir = archive_path.parent / "dataset" if archive_path is not None else None
-                console.print(
-                    {
-                        "export_id": export_record.id,
-                        "exported_sample_count": export_record.item_count,
-                        "artifact_path": str(archive_path) if archive_path else export_record.artifact_path,
-                        "dataset_dir": str(dataset_dir) if dataset_dir else None,
-                        "include_all_statuses": include_all_statuses,
-                    }
-                )
-                if export_record.item_count == 0:
-                    console.print(
-                        "[yellow]Export completed with 0 samples. "
-                        "This usually means no samples matched the export filter. "
-                        "Use `--include-all-statuses` or approve samples in the Web UI first.[/yellow]"
-                    )
+    console.print(
+        {
+            "processed_video_count": len(input_videos),
+            "succeeded_job_count": len([status for status in statuses if status == "succeeded"]),
+            "failed_job_count": len([status for status in statuses if status != "succeeded"]),
+            "export_count": len(export_paths),
+        }
+    )
+    if any(status != "succeeded" for status in statuses):
+        raise typer.Exit(code=1)
 
 
 @app.command()

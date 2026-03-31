@@ -59,7 +59,13 @@ Process a local file and export a dataset zip:
 vl2d run /path/to/video.mp4 --export
 ```
 
-VL2D currently accepts `MP4` and `MOV` input files across the CLI, Web upload flow, and backend API.
+Process all supported videos inside a folder sequentially:
+
+```bash
+vl2d run /path/to/video-folder --export
+```
+
+VL2D currently accepts `MP4` and `MOV` input files across the CLI, Web upload flow, and backend API. When the CLI input is a directory, VL2D scans it recursively and processes every supported video it finds.
 
 By default, CLI export includes all generated samples because pure CLI mode has no review step. To export only approved samples:
 
@@ -87,6 +93,8 @@ The repository includes:
 - built-in adapters for `silero-vad`, `SEMamba`, `Tesseract OCR`, and `PaddleOCR`
 
 The real heavy model stacks are optional. When those dependencies or language packs are absent, the adapters degrade to non-recognizing fallback behavior with explicit metadata so the pipeline stays runnable without inventing fake OCR text.
+
+The default SEMamba checkpoint path is `model/g_00587000.pth`. Override it with `VL2D_SEMAMBA_CHECKPOINT_PATH` if you need a different checkpoint.
 
 ## Layout
 

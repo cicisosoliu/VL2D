@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   API_BASE,
@@ -8,12 +8,14 @@ import {
   listJobs,
   listSamples,
   type ExportRecord,
+  type JobBatchResult,
   type Job,
   type Sample,
   type SamplePage,
   type SampleReviewStatus,
   updateSample,
   uploadAndQueue,
+  uploadAndQueueBatch,
 } from "./lib/api";
 import { StatusBadge } from "./components/StatusBadge";
 
@@ -128,7 +130,9 @@ export default function App() {
   const queryClient = useQueryClient();
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadValidationError, setUploadValidationError] = useState<string | null>(null);
+  const [uploadSummary, setUploadSummary] = useState<string | null>(null);
   const [lastExport, setLastExport] = useState<ExportRecord | null>(null);
   const [samplePage, setSamplePage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -164,12 +168,45 @@ export default function App() {
     }
   }, [samplePage, samplesQuery.data?.total_pages]);
 
+  useEffect(() => {
+    if (!folderInputRef.current) {
+      return;
+    }
+    folderInputRef.current.setAttribute("webkitdirectory", "");
+    folderInputRef.current.setAttribute("directory", "");
+  }, []);
+
   const uploadMutation = useMutation({
     mutationFn: uploadAndQueue,
     onSuccess: (job) => {
       setSelectedJobId(job.id);
       setPendingFile(null);
       setUploadValidationError(null);
+      setUploadSummary(`Queued 1 video: ${job.id.slice(0, 8)}`);
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+
+  const folderUploadMutation = useMutation({
+    mutationFn: ({ files }: { files: File[]; skippedCount: number }) => uploadAndQueueBatch(files),
+    onSuccess: (result: JobBatchResult, variables) => {
+      if (result.jobs.length > 0) {
+        setSelectedJobId(result.jobs[0].id);
+      }
+      const queuedCount = result.jobs.length;
+      const rejectedCount = result.rejected_files.length + variables.skippedCount;
+      if (queuedCount > 0 || rejectedCount > 0) {
+        setUploadSummary(
+          `Queued ${queuedCount} video${queuedCount === 1 ? "" : "s"}`
+            + (rejectedCount > 0 ? `, skipped ${rejectedCount} unsupported file${rejectedCount === 1 ? "" : "s"}` : ""),
+        );
+      } else {
+        setUploadSummary("No supported videos were found in the selected folder.");
+      }
+      setUploadValidationError(null);
+      if (folderInputRef.current) {
+        folderInputRef.current.value = "";
+      }
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
@@ -216,7 +253,7 @@ export default function App() {
       <section className="panel upload-panel">
         <div>
           <h2>Upload Video</h2>
-          <p>Select an MP4 or MOV video file, upload it to the backend, and enqueue a processing job.</p>
+          <p>Select an MP4 or MOV video file, or choose a folder and enqueue every supported video in it.</p>
         </div>
         <div className="upload-controls">
           <input
@@ -231,14 +268,46 @@ export default function App() {
               }
               setPendingFile(file);
               setUploadValidationError(null);
+              setUploadSummary(null);
             }}
           />
           <button disabled={!pendingFile || uploadMutation.isPending} onClick={() => pendingFile && uploadMutation.mutate(pendingFile)}>
             {uploadMutation.isPending ? "Uploading..." : "Upload & Queue"}
           </button>
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            accept={SUPPORTED_VIDEO_ACCEPT}
+            style={{ display: "none" }}
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              const supportedFiles = files.filter(isSupportedVideoFile);
+              const skippedCount = files.length - supportedFiles.length;
+              if (supportedFiles.length === 0) {
+                setUploadValidationError("No supported videos were found in the selected folder. VL2D accepts .mp4 and .mov files.");
+                setUploadSummary(
+                  skippedCount > 0 ? `Skipped ${skippedCount} unsupported file${skippedCount === 1 ? "" : "s"}.` : null,
+                );
+                return;
+              }
+              setUploadValidationError(null);
+              setUploadSummary(null);
+              folderUploadMutation.mutate({ files: supportedFiles, skippedCount });
+            }}
+          />
+          <button
+            className="secondary"
+            disabled={folderUploadMutation.isPending}
+            onClick={() => folderInputRef.current?.click()}
+          >
+            {folderUploadMutation.isPending ? "Queueing Folder..." : "Queue Folder"}
+          </button>
         </div>
+        {uploadSummary ? <p>{uploadSummary}</p> : null}
         {uploadValidationError ? <p className="error">{uploadValidationError}</p> : null}
         {uploadMutation.error ? <p className="error">{String(uploadMutation.error)}</p> : null}
+        {folderUploadMutation.error ? <p className="error">{String(folderUploadMutation.error)}</p> : null}
       </section>
 
       <div className="workspace">

@@ -9,7 +9,8 @@ from typer.testing import CliRunner
 from vl2d.cli import app
 from vl2d.db import get_session_factory
 from vl2d.doctor import DoctorCheck, DoctorReport
-from vl2d.models import ExportRecord
+from vl2d.models import ExportRecord, Job
+from vl2d.providers.semamba import SEMambaEnhancerProvider
 from vl2d.schemas import JobCreateRequest
 from vl2d.services import create_job, create_video_from_path
 from vl2d.storage import resolve_artifact
@@ -53,6 +54,34 @@ def test_cli_run_rejects_unsupported_video_extension(tmp_path: Path) -> None:
     assert result.exit_code == 2
     assert ".mp4" in result.output
     assert ".mov" in result.output
+
+
+def test_cli_run_supports_directory_input(app_env, sample_video: Path, sample_video_mov: Path, tmp_path: Path) -> None:
+    input_dir = tmp_path / "batch"
+    input_dir.mkdir()
+    mp4_copy = input_dir / "batch-a.mp4"
+    mov_copy = input_dir / "batch-b.mov"
+    mp4_copy.write_bytes(sample_video.read_bytes())
+    mov_copy.write_bytes(sample_video_mov.read_bytes())
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", str(input_dir), "--export"])
+    assert result.exit_code == 0, result.output
+    assert "processed_video_count" in result.output
+    assert "2" in result.output
+
+    session_factory = get_session_factory(app_env)
+    with session_factory() as session:
+        jobs = session.query(Job).all()
+        exports = session.query(ExportRecord).all()
+        assert len(jobs) == 2
+        assert len(exports) == 2
+
+
+def test_semamba_provider_uses_new_default_checkpoint(app_env) -> None:
+    provider = SEMambaEnhancerProvider(app_env)
+    assert provider.checkpoint_path.name == "g_00587000.pth"
+    assert provider.checkpoint_path.as_posix().endswith("model/g_00587000.pth")
 
 
 def test_worker_reports_progress_updates(app_env, sample_video: Path) -> None:

@@ -26,6 +26,7 @@ class Settings:
     default_vad_provider: str
     default_enhancer_provider: str
     default_ocr_provider: str
+    semamba_checkpoint_path: Path
     tesseract_cmd: str
     tesseract_lang: str
     tesseract_psm: int
@@ -78,6 +79,9 @@ def get_settings() -> Settings:
         default_vad_provider=os.getenv("VL2D_DEFAULT_VAD", "silero_vad"),
         default_enhancer_provider=os.getenv("VL2D_DEFAULT_ENHANCER", "semamba"),
         default_ocr_provider=os.getenv("VL2D_DEFAULT_OCR", "paddle_ocr"),
+        semamba_checkpoint_path=Path(
+            os.getenv("VL2D_SEMAMBA_CHECKPOINT_PATH", Path.cwd() / "model" / "g_00587000.pth")
+        ).resolve(),
         tesseract_cmd=os.getenv("VL2D_TESSERACT_CMD", "tesseract"),
         tesseract_lang=os.getenv("VL2D_TESSERACT_LANG", "chi_sim"),
         tesseract_psm=int(os.getenv("VL2D_TESSERACT_PSM", "6")),

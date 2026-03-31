@@ -14,6 +14,17 @@ def supported_video_extensions_text() -> str:
     return "`.mp4` or `.mov`"
 
 
+def is_supported_video_path(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in SUPPORTED_VIDEO_SUFFIXES
+
+
+def list_supported_videos(root: Path) -> list[Path]:
+    if root.is_file():
+        validate_video_filename(root.name)
+        return [root]
+    return sorted(path for path in root.rglob("*") if is_supported_video_path(path))
+
+
 def validate_video_filename(filename: str | None) -> None:
     if not filename:
         raise VideoFormatError(

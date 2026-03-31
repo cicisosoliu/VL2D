@@ -17,6 +17,7 @@ from vl2d.providers import get_provider_registry
 from vl2d.schemas import (
     ExportCreateRequest,
     ExportRead,
+    JobBatchRead,
     JobCreateRequest,
     JobRead,
     ProvidersRead,
@@ -28,6 +29,7 @@ from vl2d.schemas import (
 from vl2d.services import (
     count_samples,
     create_job,
+    create_jobs_from_uploads,
     create_video_from_upload,
     get_export_or_404,
     get_job_or_404,
@@ -74,6 +76,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> VideoRead:
         video = await create_video_from_upload(session, settings, file)
         return VideoRead.model_validate(video)
+
+    @app.post("/api/jobs/upload-batch", response_model=JobBatchRead)
+    async def upload_videos_and_queue_jobs(
+        files: list[UploadFile] = File(...),
+        session: Session = Depends(get_db),
+    ) -> JobBatchRead:
+        jobs, rejected = await create_jobs_from_uploads(session, settings, files)
+        return JobBatchRead(
+            jobs=[JobRead.model_validate(job) for job in jobs],
+            rejected_files=rejected,
+        )
 
     @app.get("/api/jobs", response_model=list[JobRead])
     def read_jobs(session: Session = Depends(get_db)) -> list[JobRead]:
