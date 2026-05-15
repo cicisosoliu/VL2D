@@ -130,6 +130,7 @@ export default function App() {
   const queryClient = useQueryClient();
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadValidationError, setUploadValidationError] = useState<string | null>(null);
   const [uploadSummary, setUploadSummary] = useState<string | null>(null);
@@ -198,7 +199,7 @@ export default function App() {
       if (queuedCount > 0 || rejectedCount > 0) {
         setUploadSummary(
           `Queued ${queuedCount} video${queuedCount === 1 ? "" : "s"}`
-            + (rejectedCount > 0 ? `, skipped ${rejectedCount} unsupported file${rejectedCount === 1 ? "" : "s"}` : ""),
+          + (rejectedCount > 0 ? `, skipped ${rejectedCount} unsupported file${rejectedCount === 1 ? "" : "s"}` : ""),
         );
       } else {
         setUploadSummary("No supported videos were found in the selected folder.");
@@ -238,11 +239,8 @@ export default function App() {
     <main className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">VL2D Review Console</p>
-          <h1>Turn Chinese-subtitle video into a reviewable speech dataset.</h1>
-          <p className="hero-copy">
-            Local-first processing with SQLite, a single worker, and direct sample approval before export.
-          </p>
+          <p className="eyebrow">V2LD 1.0</p>
+          <h1>V2LD 1.0</h1>
         </div>
         <div className="hero-note">
           <div>API: {API_BASE}</div>
@@ -257,13 +255,15 @@ export default function App() {
         </div>
         <div className="upload-controls">
           <input
+            ref={fileInputRef}
             type="file"
             accept={SUPPORTED_VIDEO_ACCEPT}
+            style={{ display: "none" }}
             onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
               if (file && !isSupportedVideoFile(file)) {
                 setPendingFile(null);
-                setUploadValidationError("Unsupported video format. VL2D accepts .mp4 and .mov files.");
+                setUploadValidationError("Unsupported video format. V2LD accepts .mp4 and .mov files.");
                 return;
               }
               setPendingFile(file);
@@ -271,6 +271,12 @@ export default function App() {
               setUploadSummary(null);
             }}
           />
+          <div className="file-picker">
+            <button className="secondary" onClick={() => fileInputRef.current?.click()}>
+              Choose File
+            </button>
+            <span className="file-picker-name">{pendingFile ? pendingFile.name : "No file chosen"}</span>
+          </div>
           <button disabled={!pendingFile || uploadMutation.isPending} onClick={() => pendingFile && uploadMutation.mutate(pendingFile)}>
             {uploadMutation.isPending ? "Uploading..." : "Upload & Queue"}
           </button>
@@ -285,7 +291,7 @@ export default function App() {
               const supportedFiles = files.filter(isSupportedVideoFile);
               const skippedCount = files.length - supportedFiles.length;
               if (supportedFiles.length === 0) {
-                setUploadValidationError("No supported videos were found in the selected folder. VL2D accepts .mp4 and .mov files.");
+                setUploadValidationError("No supported videos were found in the selected folder. V2LD accepts .mp4 and .mov files.");
                 setUploadSummary(
                   skippedCount > 0 ? `Skipped ${skippedCount} unsupported file${skippedCount === 1 ? "" : "s"}.` : null,
                 );

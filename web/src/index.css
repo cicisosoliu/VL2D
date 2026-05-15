@@ -146,6 +146,19 @@ select {
   align-content: center;
 }
 
+.file-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.file-picker-name {
+  color: #4b5563;
+  font-size: 0.92rem;
+  word-break: break-all;
+}
+
 .workspace {
   grid-template-columns: 340px minmax(0, 1fr);
 }
